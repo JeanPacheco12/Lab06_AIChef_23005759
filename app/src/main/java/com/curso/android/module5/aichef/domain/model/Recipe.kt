@@ -7,18 +7,6 @@ package com.curso.android.module5.aichef.domain.model
  *
  * Este modelo representa una receta generada por la IA.
  * Se usa tanto para la UI como para persistir en Firestore.
- *
- * CAMPOS:
- * - id: ID único del documento en Firestore (vacío para nuevas recetas)
- * - userId: ID del usuario propietario (de Firebase Auth)
- * - title: Título de la receta generada
- * - ingredients: Lista de ingredientes detectados
- * - steps: Pasos de preparación
- * - imageUri: URI de la imagen original (opcional)
- * - generatedImageUrl: URL de la imagen del plato generada por IA (cache en Storage)
- * - createdAt: Timestamp de creación
- *
- * =============================================================================
  */
 data class Recipe(
     val id: String = "",
@@ -28,15 +16,11 @@ data class Recipe(
     val steps: List<String> = emptyList(),
     val imageUri: String = "",
     val generatedImageUrl: String = "",
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val isFavorite: Boolean = false // <-- NUEVO: Variable para favoritos
 ) {
     /**
      * Convierte el modelo a un Map para guardar en Firestore
-     *
-     * CONCEPTO: Firestore Document Structure
-     * Firestore almacena datos como documentos JSON-like.
-     * Podemos usar data classes directamente o convertir a Map
-     * para mayor control sobre los nombres de campos.
      */
     fun toMap(): Map<String, Any> = mapOf(
         "userId" to userId,
@@ -45,16 +29,13 @@ data class Recipe(
         "steps" to steps,
         "imageUri" to imageUri,
         "generatedImageUrl" to generatedImageUrl,
-        "createdAt" to createdAt
+        "createdAt" to createdAt,
+        "isFavorite" to isFavorite // <-- LO NUEVO: Vamos a guardar en la base de datos.
     )
 
     companion object {
         /**
          * Crea una Recipe desde un documento de Firestore
-         *
-         * @param id ID del documento
-         * @param data Datos del documento como Map
-         * @return Recipe con los datos del documento
          */
         @Suppress("UNCHECKED_CAST")
         fun fromFirestore(id: String, data: Map<String, Any?>): Recipe {
@@ -66,7 +47,8 @@ data class Recipe(
                 steps = (data["steps"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
                 imageUri = data["imageUri"] as? String ?: "",
                 generatedImageUrl = data["generatedImageUrl"] as? String ?: "",
-                createdAt = (data["createdAt"] as? Long) ?: System.currentTimeMillis()
+                createdAt = (data["createdAt"] as? Long) ?: System.currentTimeMillis(),
+                isFavorite = data["isFavorite"] as? Boolean ?: false // <-- NUEVO: Leer de la base de datos (por defecto false)
             )
         }
     }
@@ -76,9 +58,6 @@ data class Recipe(
  * =============================================================================
  * GeneratedRecipe - Resultado del análisis de IA
  * =============================================================================
- *
- * Este modelo representa la respuesta estructurada de Firebase AI Logic
- * después de analizar una imagen de ingredientes.
  */
 data class GeneratedRecipe(
     val title: String,
