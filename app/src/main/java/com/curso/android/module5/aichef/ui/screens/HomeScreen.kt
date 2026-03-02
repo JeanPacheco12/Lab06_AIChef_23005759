@@ -15,6 +15,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.RestaurantMenu
 import androidx.compose.material3.Card
@@ -41,26 +43,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/**
- * =============================================================================
- * HomeScreen - Pantalla principal con lista de recetas
- * =============================================================================
- *
- * CONCEPTO: Query de Firestore por Usuario
- * Las recetas se filtran en el servidor usando:
- * collection("recipes").whereEqualTo("userId", auth.uid)
- *
- * Esto asegura que cada usuario solo ve sus propias recetas,
- * y las reglas de seguridad de Firestore refuerzan esto.
- *
- * CONCEPTO: LazyColumn para listas
- * LazyColumn es el equivalente a RecyclerView en Compose:
- * - Solo renderiza elementos visibles
- * - Soporta scroll infinito
- * - Más eficiente para listas largas
- *
- * =============================================================================
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -69,8 +51,9 @@ fun HomeScreen(
     onNavigateToDetail: (String) -> Unit,
     onLogout: () -> Unit
 ) {
-    // Observar lista de recetas
+    // Observar lista de recetas y el estado del filtro
     val recipes by viewModel.recipes.collectAsStateWithLifecycle()
+    val showOnlyFavorites by viewModel.showOnlyFavorites.collectAsStateWithLifecycle()
 
     Scaffold(
         topBar = {
@@ -81,6 +64,16 @@ fun HomeScreen(
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 ),
                 actions = {
+                    // Botón para filtrar por favoritos
+                    IconButton(onClick = { viewModel.toggleFavoritesFilter() }) {
+                        Icon(
+                            imageVector = if (showOnlyFavorites) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                            contentDescription = "Filtrar favoritos",
+                            tint = if (showOnlyFavorites) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    // Botón de cerrar sesión
                     IconButton(
                         onClick = {
                             viewModel.signOut()
@@ -108,14 +101,13 @@ fun HomeScreen(
         }
     ) { paddingValues ->
         if (recipes.isEmpty()) {
-            // Estado vacío
             EmptyRecipesState(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(paddingValues)
+                    .padding(paddingValues),
+                isFiltering = showOnlyFavorites
             )
         } else {
-            // Lista de recetas
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
@@ -125,11 +117,12 @@ fun HomeScreen(
             ) {
                 items(
                     items = recipes,
-                    key = { it.id } // Clave única para optimización
+                    key = { it.id }
                 ) { recipe ->
                     RecipeCard(
                         recipe = recipe,
-                        onClick = { onNavigateToDetail(recipe.id) }
+                        onClick = { onNavigateToDetail(recipe.id) },
+                        onFavoriteClick = { viewModel.toggleFavorite(recipe.id, recipe.isFavorite) }
                     )
                 }
             }
@@ -137,14 +130,12 @@ fun HomeScreen(
     }
 }
 
-/**
- * Card para mostrar una receta individual
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RecipeCard(
     recipe: Recipe,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onFavoriteClick: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -159,7 +150,6 @@ private fun RecipeCard(
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
-            // Icono y título
             androidx.compose.foundation.layout.Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -185,11 +175,19 @@ private fun RecipeCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+
+                // Botón individual de corazón en cada tarjeta
+                IconButton(onClick = onFavoriteClick) {
+                    Icon(
+                        imageVector = if (recipe.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                        contentDescription = "Marcar como favorito",
+                        tint = if (recipe.isFavorite) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Ingredientes (preview)
             Text(
                 text = "Ingredientes: ${recipe.ingredients.take(3).joinToString(", ")}${if (recipe.ingredients.size > 3) "..." else ""}",
                 style = MaterialTheme.typography.bodyMedium,
@@ -200,7 +198,6 @@ private fun RecipeCard(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Pasos (preview)
             Text(
                 text = "${recipe.steps.size} pasos",
                 style = MaterialTheme.typography.labelMedium,
@@ -210,11 +207,8 @@ private fun RecipeCard(
     }
 }
 
-/**
- * Estado cuando no hay recetas
- */
 @Composable
-private fun EmptyRecipesState(modifier: Modifier = Modifier) {
+private fun EmptyRecipesState(modifier: Modifier = Modifier, isFiltering: Boolean = false) {
     Box(
         modifier = modifier,
         contentAlignment = Alignment.Center
@@ -233,7 +227,7 @@ private fun EmptyRecipesState(modifier: Modifier = Modifier) {
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                text = "No tienes recetas guardadas",
+                text = if (isFiltering) "No tienes recetas favoritas" else "No tienes recetas guardadas",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -241,7 +235,7 @@ private fun EmptyRecipesState(modifier: Modifier = Modifier) {
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "¡Presiona + para generar tu primera receta!",
+                text = if (isFiltering) "Marca alguna receta con el corazón" else "¡Presiona + para generar tu primera receta!",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
             )
@@ -249,9 +243,6 @@ private fun EmptyRecipesState(modifier: Modifier = Modifier) {
     }
 }
 
-/**
- * Formatea un timestamp a fecha legible
- */
 private fun formatDate(timestamp: Long): String {
     val sdf = SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault())
     return sdf.format(Date(timestamp))
