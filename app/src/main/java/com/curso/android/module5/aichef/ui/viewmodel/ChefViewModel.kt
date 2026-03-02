@@ -107,20 +107,36 @@ class ChefViewModel @Inject constructor(
      *
      * Si el usuario no está autenticado, emitimos lista vacía.
      */
-    val recipes: StateFlow<List<Recipe>> = authState
-        .flatMapLatest { state ->
+
+    // =========================================================================
+    // FILTRO DE FAVORITOS
+    // =========================================================================
+
+    private val _showOnlyFavorites = MutableStateFlow(false)
+    val showOnlyFavorites: StateFlow<Boolean> = _showOnlyFavorites.asStateFlow()
+
+    fun toggleFavoritesFilter() {
+        _showOnlyFavorites.value = !_showOnlyFavorites.value
+    }
+    val recipes: StateFlow<List<Recipe>> = kotlinx.coroutines.flow.combine(
+        authState.flatMapLatest { state ->
             when (state) {
-                is AuthState.Authenticated -> {
-                    firestoreRepository.observeUserRecipes(state.userId)
-                }
+                is AuthState.Authenticated -> firestoreRepository.observeUserRecipes(state.userId)
                 else -> flowOf(emptyList())
             }
+        },
+        showOnlyFavorites
+    ) { recipeList, isFilteringFavorites ->
+        if (isFilteringFavorites) {
+            recipeList.filter { it.isFavorite }
+        } else {
+            recipeList
         }
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = emptyList()
-        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
 
     // =========================================================================
     // ESTADO DE GENERACIÓN DE RECETAS
@@ -282,6 +298,16 @@ class ChefViewModel @Inject constructor(
     fun deleteRecipe(recipeId: String) {
         viewModelScope.launch {
             firestoreRepository.deleteRecipe(recipeId)
+        }
+    }
+
+    /**
+     * Alterna el estado de favorito de una receta
+     */
+    fun toggleFavorite(recipeId: String, currentStatus: Boolean) {
+        viewModelScope.launch {
+            // El Repositorio se encarga de ir a Firestore a cambiar el valor
+            firestoreRepository.toggleFavorite(recipeId, !currentStatus)
         }
     }
 
