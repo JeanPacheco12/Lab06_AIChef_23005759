@@ -57,4 +57,10 @@ interface IFirestoreRepository {
      * @return Result indicando éxito o error
      */
     suspend fun updateGeneratedImageUrl(recipeId: String, imageUrl: String): Result<Unit>
+
+    /**
+     * Con este suspend fun ya tengo la base de datos lista para guardar favoritos y
+     * el modelo actualizado. Evita el error de override en FirestoreRepository.kt
+     */
+    suspend fun toggleFavorite(recipeId: String, isFavorite: Boolean): Result<Unit>
 }
