@@ -28,4 +28,4 @@ laboratorios anteriores como tener un ícono de corazón para los favoritos, o n
 
 ---
 ### Enlace del video explicativo:
->> (https://youtu.be/FR_hKxY3L78) <<
+> (https://youtu.be/FR_hKxY3L78) 
