@@ -1,5 +1,7 @@
 package com.curso.android.module5.aichef.ui.screens
 
+import android.graphics.Bitmap
+import android.graphics.Picture
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +21,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Restaurant
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -34,85 +37,29 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.drawscope.draw
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.curso.android.module5.aichef.domain.model.UiState
 import com.curso.android.module5.aichef.ui.viewmodel.ChefViewModel
+import com.curso.android.module5.aichef.util.ShareUtils
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
-/**
- * =============================================================================
- * RecipeDetailScreen - Pantalla de detalle de receta con imagen generada por IA
- * =============================================================================
- *
- * CONCEPTO: Generación de Imágenes con IA y Cache
- * Esta pantalla demuestra el uso de Firebase AI Logic para generar imágenes
- * del plato terminado usando el modelo Gemini con capacidades de generación
- * de imágenes (gemini-3-pro-image-preview).
- *
- * CONCEPTO: Cache de Imágenes con Firebase Storage
- * Para evitar consumir cuota de API en cada visualización, implementamos
- * un sistema de cache:
- * 1. Primera visita: Genera imagen con IA, sube a Storage, guarda URL en Firestore
- * 2. Visitas posteriores: Usa la URL guardada y Coil para cargar eficientemente
- *
- * FLUJO DE CACHE:
- * ┌─────────────┐     ┌──────────────────┐     ┌─────────────┐
- * │ ¿Tiene URL? │─Sí─▶│ Cargar con Coil  │────▶│   Mostrar   │
- * └──────┬──────┘     └──────────────────┘     └─────────────┘
- *        │No
- *        ▼
- * ┌─────────────┐     ┌──────────────────┐     ┌─────────────┐
- * │ Generar IA  │────▶│ Subir a Storage  │────▶│ Guardar URL │
- * └─────────────┘     └──────────────────┘     └─────────────┘
- *
- * ARQUITECTURA DE LA PANTALLA:
- * ┌─────────────────────────────────────────┐
- * │            TopAppBar                     │
- * │  ← Volver          Título de Receta     │
- * ├─────────────────────────────────────────┤
- * │     ┌─────────────────────────────┐     │
- * │     │   Imagen Generada por IA    │     │
- * │     │   (cache en Storage)        │     │
- * │     └─────────────────────────────┘     │
- * │     ┌─────────────────────────────┐     │
- * │     │      INGREDIENTES           │     │
- * │     │  ✓ Ingrediente 1            │     │
- * │     └─────────────────────────────┘     │
- * │     ┌─────────────────────────────┐     │
- * │     │      PREPARACIÓN            │     │
- * │     │  1. Paso uno                │     │
- * │     └─────────────────────────────┘     │
- * └─────────────────────────────────────────┘
- *
- * CONCEPTOS CLAVE DEMOSTRADOS:
- *
- * 1. LaunchedEffect para Side Effects:
- *    - Dispara la verificación de cache o generación de imagen
- *    - Se ejecuta una vez por receta (key = recipe)
- *
- * 2. Manejo de Estados UI:
- *    - Idle: Esperando iniciar
- *    - Loading: Generando/cargando imagen
- *    - Success: URL lista, Coil carga la imagen
- *    - Error: Fallo con opción de reintentar
- *
- * 3. Coil AsyncImage para carga de URLs:
- *    - Carga asíncrona desde URL de Firebase Storage
- *    - Cache automático en memoria y disco
- *    - Manejo de estados de carga internos
- *
- * 4. Scroll vertical con rememberScrollState:
- *    - Permite scroll cuando el contenido excede la pantalla
- *    - Mantiene posición durante recomposiciones
- *
- * =============================================================================
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RecipeDetailScreen(
@@ -120,31 +67,20 @@ fun RecipeDetailScreen(
     recipeId: String,
     onNavigateBack: () -> Unit
 ) {
-    // =========================================================================
-    // OBSERVACIÓN DE ESTADOS
-    // =========================================================================
-    // Obtenemos la receta buscándola en la lista del ViewModel
-    // Esto evita una llamada adicional a Firestore
     val recipes by viewModel.recipes.collectAsStateWithLifecycle()
     val recipe = recipes.find { it.id == recipeId }
-
-    // Estado de la generación de imagen
     val imageState by viewModel.imageGenerationState.collectAsStateWithLifecycle()
 
     // =========================================================================
-    // SIDE EFFECT: Verificar Cache o Generar Imagen
+    // VARIABLES PARA COMPARTIR RECETA (PARTE 2)
     // =========================================================================
-    // LaunchedEffect se ejecuta cuando 'recipe' cambia
-    // Esto verifica si existe imagen cacheada o genera una nueva
-    //
-    // CONCEPTO: LaunchedEffect
-    // - Se ejecuta en un CoroutineScope ligado al ciclo de vida del composable
-    // - Se cancela automáticamente si el composable sale de composición
-    // - La key (recipe) determina cuándo re-ejecutar el efecto
-    //
-    // CONCEPTO: Cache-First Strategy
-    // - Si recipe.generatedImageUrl no está vacía, se usa directamente
-    // - Si está vacía, se genera con IA, sube a Storage, y guarda URL
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    var isSharing by remember { mutableStateOf(false) }
+
+    // El "Picture" es el lienzo invisible donde se graba la interfaz
+    val picture = remember { Picture() }
+
     LaunchedEffect(recipe) {
         recipe?.let {
             viewModel.generateRecipeImage(
@@ -162,8 +98,6 @@ fun RecipeDetailScreen(
                 title = { Text(recipe?.title ?: "Detalle de Receta") },
                 navigationIcon = {
                     IconButton(onClick = {
-                        // Limpiamos el estado de imagen al salir para evitar
-                        // mostrar la imagen anterior en la próxima receta
                         viewModel.clearImageState()
                         onNavigateBack()
                     }) {
@@ -171,6 +105,52 @@ fun RecipeDetailScreen(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Volver"
                         )
+                    }
+                },
+                actions = {
+                    // Si tenemos la receta, mostramos el botón de compartir
+                    if (recipe != null) {
+                        if (isSharing) {
+                            // Animación de carga mientras prepara la imagen
+                            CircularProgressIndicator(
+                                modifier = Modifier
+                                    .padding(end = 16.dp)
+                                    .size(24.dp),
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            IconButton(onClick = {
+                                isSharing = true
+                                coroutineScope.launch {
+                                    // Pausa de 100ms para asegurar que la UI muestre el círculo de carga
+                                    delay(100)
+                                    try {
+                                        // 1. Convertir el Picture a Bitmap
+                                        val bitmap = Bitmap.createBitmap(
+                                            picture.width,
+                                            picture.height,
+                                            Bitmap.Config.ARGB_8888
+                                        )
+                                        val canvas = android.graphics.Canvas(bitmap)
+                                        canvas.drawColor(android.graphics.Color.WHITE) // Fondo blanco
+                                        canvas.drawPicture(picture)
+
+                                        // 2. Enviar a ShareUtils
+                                        ShareUtils.shareRecipeImage(context, bitmap)
+                                    } catch (e: Exception) {
+                                        e.printStackTrace()
+                                    } finally {
+                                        isSharing = false
+                                    }
+                                }
+                            }) {
+                                Icon(
+                                    imageVector = Icons.Default.Share,
+                                    contentDescription = "Compartir receta"
+                                )
+                            }
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -181,7 +161,6 @@ fun RecipeDetailScreen(
         }
     ) { paddingValues ->
         if (recipe == null) {
-            // Estado de error: receta no encontrada
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -191,11 +170,6 @@ fun RecipeDetailScreen(
                 Text("Receta no encontrada")
             }
         } else {
-            // ================================================================
-            // CONTENIDO SCROLLEABLE
-            // ================================================================
-            // verticalScroll permite scroll cuando el contenido es largo
-            // rememberScrollState mantiene la posición durante recomposiciones
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -203,29 +177,62 @@ fun RecipeDetailScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp)
             ) {
-                // Sección de imagen generada por IA con cache
-                RecipeImageSection(
-                    imageState = imageState,
-                    recipeTitle = recipe.title,
-                    onRetry = {
-                        viewModel.generateRecipeImage(
-                            recipeId = recipe.id,
-                            existingImageUrl = "", // Forzar regeneración
-                            recipeTitle = recipe.title,
-                            ingredients = recipe.ingredients
-                        )
-                    }
-                )
+                // ============================================================
+                // BLOQUE A CAPTURAR (PARTE 2)
+                // Envolvemos el contenido en esta columna con drawWithCache
+                // ============================================================
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .drawWithCache {
+                            val width = this.size.width.toInt()
+                            val height = this.size.height.toInt()
+                            onDrawWithContent {
+                                val pictureCanvas = androidx.compose.ui.graphics.Canvas(
+                                    picture.beginRecording(width, height)
+                                )
+                                draw(this, this.layoutDirection, pictureCanvas, this.size) {
+                                    this@onDrawWithContent.drawContent()
+                                }
+                                picture.endRecording()
 
-                Spacer(modifier = Modifier.height(24.dp))
+                                drawIntoCanvas { canvas ->
+                                    canvas.nativeCanvas.drawPicture(picture)
+                                }
+                            }
+                        }
+                        // Le damos un pequeño fondo blanco extra a la columna para que
+                        // el PNG final no tenga texto flotando en transparencias.
+                        .padding(8.dp)
+                ) {
+                    // Título extra para la imagen capturada
+                    Text(
+                        text = recipe.title,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
 
-                // Sección de ingredientes
-                IngredientsSection(ingredients = recipe.ingredients)
+                    RecipeImageSection(
+                        imageState = imageState,
+                        recipeTitle = recipe.title,
+                        onRetry = {
+                            viewModel.generateRecipeImage(
+                                recipeId = recipe.id,
+                                existingImageUrl = "",
+                                recipeTitle = recipe.title,
+                                ingredients = recipe.ingredients
+                            )
+                        }
+                    )
 
-                Spacer(modifier = Modifier.height(24.dp))
+                    Spacer(modifier = Modifier.height(24.dp))
+                    IngredientsSection(ingredients = recipe.ingredients)
 
-                // Sección de pasos de preparación
-                StepsSection(steps = recipe.steps)
+                    Spacer(modifier = Modifier.height(24.dp))
+                    StepsSection(steps = recipe.steps)
+                }
 
                 Spacer(modifier = Modifier.height(16.dp))
             }
@@ -233,33 +240,6 @@ fun RecipeDetailScreen(
     }
 }
 
-/**
- * =============================================================================
- * RecipeImageSection - Sección de imagen generada con IA y cache
- * =============================================================================
- *
- * CONCEPTO: Manejo de Estados Asíncronos en UI
- * Esta sección demuestra cómo manejar los diferentes estados de una
- * operación asíncrona (generación/carga de imagen) en la UI:
- *
- * - Idle: Estado inicial, esperando acción
- * - Loading: Generando imagen con IA o cargando desde cache
- * - Success: URL disponible, Coil carga la imagen
- * - Error: Fallo con opción de reintentar
- *
- * CONCEPTO: Sealed Class para Estados
- * UiState<T> es una sealed class que garantiza manejo exhaustivo
- * de todos los estados posibles con 'when'.
- *
- * CONCEPTO: Coil AsyncImage
- * AsyncImage es un composable de Coil que:
- * - Carga imágenes de forma asíncrona desde URLs
- * - Implementa cache en memoria y disco automáticamente
- * - Maneja estados de carga/error internamente
- * - Soporta placeholders y transformaciones
- *
- * =============================================================================
- */
 @Composable
 private fun RecipeImageSection(
     imageState: UiState<String>,
@@ -273,24 +253,14 @@ private fun RecipeImageSection(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         )
     ) {
-        // ====================================================================
-        // ASPECT RATIO
-        // ====================================================================
-        // aspectRatio(16f / 9f) mantiene proporción 16:9 (widescreen)
-        // Esto asegura que la imagen siempre tenga la misma forma
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f),
             contentAlignment = Alignment.Center
         ) {
-            // ================================================================
-            // MANEJO EXHAUSTIVO DE ESTADOS
-            // ================================================================
-            // 'when' con sealed class garantiza que manejamos todos los casos
             when (imageState) {
                 is UiState.Idle -> {
-                    // Estado inicial - esperando que inicie la generación
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
@@ -309,9 +279,7 @@ private fun RecipeImageSection(
                         )
                     }
                 }
-
                 is UiState.Loading -> {
-                    // Estado de carga - la IA está generando la imagen
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
@@ -325,7 +293,6 @@ private fun RecipeImageSection(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            // Icono de "magia" para indicar IA
                             Icon(
                                 imageVector = Icons.Default.AutoAwesome,
                                 contentDescription = null,
@@ -340,19 +307,7 @@ private fun RecipeImageSection(
                         }
                     }
                 }
-
                 is UiState.Success -> {
-                    // ========================================================
-                    // ÉXITO: Cargar imagen desde URL con Coil
-                    // ========================================================
-                    // AsyncImage de Coil carga imágenes desde URLs de forma
-                    // asíncrona con cache automático en memoria y disco.
-                    // La URL puede ser de Firebase Storage (cache) o cualquier
-                    // otra fuente compatible.
-                    //
-                    // CONCEPTO: ContentScale.Crop
-                    // Recorta la imagen para llenar completamente el espacio
-                    // disponible, manteniendo la proporción del aspecto
                     AsyncImage(
                         model = imageState.data,
                         contentDescription = "Imagen de $recipeTitle",
@@ -362,9 +317,7 @@ private fun RecipeImageSection(
                         contentScale = ContentScale.Crop
                     )
                 }
-
                 is UiState.Error -> {
-                    // Estado de error - mostrar mensaje y botón de reintentar
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
@@ -393,20 +346,6 @@ private fun RecipeImageSection(
     }
 }
 
-/**
- * =============================================================================
- * IngredientsSection - Sección de ingredientes
- * =============================================================================
- *
- * CONCEPTO: Composición de Listas
- * En Compose, para listas pequeñas (< 20 items) podemos usar forEach
- * directamente en un Column. Para listas grandes, usar LazyColumn.
- *
- * Esta sección itera sobre los ingredientes y los muestra con un
- * ícono de check para indicar que son items de una lista.
- *
- * =============================================================================
- */
 @Composable
 private fun IngredientsSection(ingredients: List<String>) {
     Card(
@@ -421,17 +360,13 @@ private fun IngredientsSection(ingredients: List<String>) {
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
-            // Título de la sección
             Text(
                 text = "Ingredientes",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
             )
-
             Spacer(modifier = Modifier.height(12.dp))
-
-            // Lista de ingredientes con íconos
             ingredients.forEach { ingredient ->
                 Row(
                     modifier = Modifier
@@ -456,22 +391,6 @@ private fun IngredientsSection(ingredients: List<String>) {
     }
 }
 
-/**
- * =============================================================================
- * StepsSection - Sección de pasos de preparación
- * =============================================================================
- *
- * CONCEPTO: forEachIndexed para Listas Numeradas
- * Cuando necesitamos el índice además del elemento, usamos forEachIndexed.
- * Esto nos permite numerar los pasos automáticamente.
- *
- * CONCEPTO: Badges Circulares
- * El número del paso se muestra en un Card circular usando:
- * - shape = RoundedCornerShape(50) para hacerlo circular
- * - padding simétrico para mantener forma
- *
- * =============================================================================
- */
 @Composable
 private fun StepsSection(steps: List<String>) {
     Card(
@@ -486,17 +405,13 @@ private fun StepsSection(steps: List<String>) {
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
-            // Título de la sección
             Text(
                 text = "Preparación",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
             )
-
             Spacer(modifier = Modifier.height(12.dp))
-
-            // Lista numerada de pasos
             steps.forEachIndexed { index, step ->
                 Row(
                     modifier = Modifier
@@ -504,12 +419,11 @@ private fun StepsSection(steps: List<String>) {
                         .padding(vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // Badge circular con número del paso
                     Card(
                         colors = CardDefaults.cardColors(
                             containerColor = MaterialTheme.colorScheme.primaryContainer
                         ),
-                        shape = RoundedCornerShape(50) // Forma circular
+                        shape = RoundedCornerShape(50)
                     ) {
                         Text(
                             text = "${index + 1}",
@@ -519,8 +433,6 @@ private fun StepsSection(steps: List<String>) {
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                     }
-
-                    // Texto del paso
                     Text(
                         text = step,
                         style = MaterialTheme.typography.bodyLarge,
